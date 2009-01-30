@@ -74,20 +74,20 @@ module NeverBlock
       # Can we create one?
       # Wait in the queue then
 			def acquire(fiber)
-        # A special case for rails when doing ActiveRecord stuff when not yet
-        # running in the context of a request (fiber) like in the case of AR
-        # queries in environment.rb (Root Fiber)
-        return @connections.first unless fiber[:callbacks]
+        # Special case for when the database is accessed outside the fiber pool, for example
+        # ActiveRecord running queries in environment.rb (with the Root Fiber). It's possible all
+        # connnections might be busy when this happens, so we create an extra connection if needed.
+        return @connections.first || (@extra_connection ||= @connection_proc.call) unless fiber[:callbacks]
 
         fiber[:current_pool_key] = connection_pool_key
         return fiber[connection_pool_key] if fiber[connection_pool_key]
         conn =  if !@connections.empty?
-          @connections.shift
-        elsif (@connections.length + @busy_connections.length) < @size
-          @connection_proc.call
-        else
-					Fiber.yield @queue << fiber
-        end
+                  @connections.shift
+                elsif (@connections.length + @busy_connections.length) < @size
+                  @connection_proc.call
+                else
+                  Fiber.yield @queue << fiber
+                end
 
         # They're called in reverse order i.e. release then process_queue
         fiber[:callbacks] << self.method(:process_queue)
